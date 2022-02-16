@@ -1,0 +1,206 @@
+
+heat_template_version: 2017-02-24
+
+description: Despliegue de la practica final de CNVR
+
+resources:
+# Creacion de las redes y subredes del escenario
+  net1:
+    type: OS::Neutron::Net
+    properties:
+      name: net1
+  subnet1:
+    type: OS::Neutron::Subnet
+    properties:
+      name: subnet1
+      network: { get_resource: net1 }
+      cidr: "10.1.1.0/24"
+      gateway_ip: "10.1.1.1"
+  net2:
+    type: OS::Neutron::Net
+    properties:
+      name: net2
+  subnet2:
+    type: OS::Neutron::Subnet
+    properties:
+      name: subnet2
+      network: { get_resource: net2 }
+      cidr: "10.1.2.0/24"
+      gateway_ip: "10.1.2.1"
+
+  # Creacion del router
+  router:
+    type: OS::Neutron::Router
+    properties:
+      external_gateway_info: { network: ExtNet }
+      name: r0
+  routerInterface:
+    type: OS::Neutron::RouterInterface
+    properties:
+      router_id: { get_resource: router }
+      subnet: { get_resource: subnet1 }
+
+  # Creacion del security group especificado en el enunciado del trabajo
+  securityGroup:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: sec_grop_cnvr
+      description: Security para practica final CNVR
+      rules:
+        - { remote_ip_prefix: 0.0.0.0/0, direction: ingress }
+        - { remote_ip_prefix: 0.0.0.0/0, direction: egress }
+
+  # Creacion de load balancer
+#Recurso del load balancer que se encarga de dirigir el tráfico hacia los servidores
+  load_balancer:
+    type: OS::Neutron::LBaaS::LoadBalancer
+    depends_on: [ routerInterface ]
+    properties:
+      name: load_balancer
+      vip_subnet: { get_resource: subnet1 }
+#Recurso que maneja los listeners, que son un endpoint para la virtual ip
+  load_balancer_listener:
+    type: OS::Neutron::LBaaS::Listener
+    depends_on: [ load_balancer ]
+    properties:
+      name: listener
+      loadbalancer: { get_resource: load_balancer }
+      protocol: HTTP
+      protocol_port: 80
+#Recurso para manejar un conjunto de nodos. Definimos el algoritmo de acceso a los nodos y el protocolo
+  load_balancer_pool:
+    type: OS::Neutron::LBaaS::Pool
+    depends_on: [ load_balancer_listener ]
+    properties:
+      name: pool
+      lb_algorithm: ROUND_ROBIN
+      protocol: HTTP
+      listener: { get_resource: load_balancer_listener }
+#Este recurso vigila el status de los servidores del balanceador de carga
+  load_balancer_monitor:
+    type: OS::Neutron::LBaaS::HealthMonitor
+    depends_on: [ load_balancer_pool ]
+    properties:
+      delay: 3
+      type: HTTP
+      timeout: 3
+      max_retries: 3
+      pool: { get_resource: load_balancer_pool }
+
+#IP para la conexion a los servidores desde el exterior
+  load_balancer_floatingIP:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: ExtNet
+      port_id: { get_attr: [load_balancer, vip_port_id ]}
+
+#Creacion de los servidores con autoescalado
+  autoscalingGroup:
+    type: OS::Heat::AutoScalingGroup
+    properties:
+      max_size: 6
+      min_size: 1
+      desired_capacity: 3
+      resource:
+        type: practica_final_server.yaml
+        properties:
+          load_balancer_pool: { get_resource: load_balancer_pool }
+          net1: { get_resource: net1 }
+          subnet1: { get_resource: subnet1 }
+          net2: { get_resource: net2 }
+          subnet2: { get_resource: subnet2 }
+          security_group: { get_resource: securityGroup }
+          bbdd_ip: { get_attr: [bbdd, first_address] }
+
+  scale_up_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: { get_resource: autoscalingGroup }
+      cooldown: 5
+      scaling_adjustment: 1
+
+  scale_down_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: { get_resource: autoscalingGroup }
+      cooldown: 5
+      scaling_adjustment: -1
+
+
+ # Creacion de los puertos para el servidor Admin
+  port1:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_resource: net1 }
+      fixed_ips:
+       - subnet_id: { get_resource: subnet1 }
+      security_groups: [{ get_resource: securityGroup }]
+
+  port2:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_resource: net2 }
+      fixed_ips:
+       - subnet_id: { get_resource: subnet2 }
+      security_groups: [{ get_resource: securityGroup }]
+
+  #Creacion de un keypair para conexion a admin
+  keyPair:
+    type: OS::Nova::KeyPair
+    properties:
+      name: admin
+      #Con este atributo a true podemos acceder a la private key posteriortmente
+      save_private_key: true
+
+#Creacion del servidor Admin
+  admin:
+    type: OS::Nova::Server
+    properties:
+      key_name: { get_resource: keyPair }
+      name: admin
+      image: xenial-server-cloudimg-amd64-vnx
+      flavor: m1.smaller
+      networks:
+        - port: { get_resource: port1 }
+        - port: { get_resource: port2 }
+      user_data_format: RAW
+      user_data: |
+        #!/bin/bash
+        echo "auto ens4" >> /etc/network/interfaces.d/50-cloud-init.cfg
+        echo "iface ens4 inet dhcp" >> /etc/network/interfaces.d/50-cloud-init.cfg
+        ifup ens4
+
+  admin_publicIP:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: ExtNet
+      port_id: { get_resource: port1 }
+
+  # Creacion de la base de datos
+  bbdd:
+    type: OS::Nova::Server
+    properties:
+      name: bbdd
+      image: bbdd_cnvr
+      flavor: m1.smaller
+      networks:
+        - network: { get_resource: net2 }
+      security_groups: [{ get_resource: securityGroup }]
+
+outputs:
+  admin_ip:
+    description: Admin IP address en net1
+    value: { get_attr: [ admin, networks, net1, 0] }
+  load_balancer_ip:
+    description: load balancer IP address
+    value: { get_attr: [ load_balancer_floatingIP, fixed_ip_address ] }
+  scaleup_url:
+    description: url para añadir 1 servidor
+    value: {get_attr: [scale_up_policy, alarm_url]}
+  scaledown_url:
+    description: url para quitar un servidor
+    value: {get_attr: [scale_down_policy, alarm_url]}
+
+#El recurso scallingPolicy tiene un atributo alarm_url que se puede usar para enviar alarmas mediante POST y redimensionar el numero de servidores

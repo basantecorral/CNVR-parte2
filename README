@@ -1,0 +1,28 @@
+Autores: Alvaro Basante Corral y Javier Sanz Saez
+
+Instrucciones para el despliegue de la practica final de CNVR:
+
+  1. Si openstack no esta arrancado: ./final_start_openstack.sh
+  2. Login con admin: source admin-openrc.sh
+  3. Importar la imagen de la base de datos a openstack: ./final_image_create.sh
+  4. Crear usuario para desplegar el escenario distinto al administrador: ./final_create_user.sh
+  5. Login con nuevo usuario pfinal_user: source pfinal_user-openrc.sh
+  6. Desplegar escenario: ./final_create_escenario.sh || Desplegar escenario con autoescalado ./final_create_autoscaling.sh
+  7. Configurar NAT: ./final_config_nat.sh
+  8. Configurar firewall: ./final_firewall.sh
+
+==================================================================================================
+
+Instrucciones para probar el escalado:
+
+  Ejecutar scripts scaleDown.sh y scaleUp.sh para quitar o añadir servidores.
+
+
+==================================================================================================
+
+Intrucciones para borrar el escenario:
+
+  1. Eliminar el escenario desplegado: ./final_delete_escenario.sh
+  2. Login con admin: source admin-openrc.sh
+  3. Borrar usuario de la practica: ./final_delete_user.sh
+  4. Si se necesita parar openstack: ./final_destroy_openstack.sh

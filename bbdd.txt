@@ -1,0 +1,13 @@
+Para la imagen de la base de datos:
+
+Primero se crea una instancia de xenial server
+Se accede a ella y se instala mysql: apt update && apt install mysql-server
+Se crea una base de datos: mysql ->> create database cnvr
+Se crea un snapshot de la imagen llamada bbdd_cnvr 
+Se exporta la imagen a nuestro pc => openstack image save --file bbdd_cnvr.qcow2 bbdd_cnvr
+Ya en el escenario de la practica, se importa la imagen con => openstack image create --disk-format qcow2 --public --file ./images/bbdd_cnvr.qcow2 bbdd_cnvr
+
+Service mysql status para comprobar si se esta ejecutando
+
+
+
